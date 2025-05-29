@@ -99,14 +99,35 @@
             document.getElementById('syncStatus').innerHTML = message;
         }
 
+        // ===== FUNZIONI API GOOGLE SHEETS CON JSONP =====
         async function loadDataFromSheets() {
             if (!isConfigured) return;
             
             try {
                 updateSyncStatus('🔄 Caricamento dati...');
                 
-                const response = await fetch(SHEETS_API_URL);
-                const data = await response.json();
+                // Usa JSONP per aggirare CORS
+                const callbackName = 'callback_' + Date.now();
+                const script = document.createElement('script');
+                
+                const promise = new Promise((resolve, reject) => {
+                    window[callbackName] = function(data) {
+                        delete window[callbackName];
+                        document.body.removeChild(script);
+                        resolve(data);
+                    };
+                    
+                    script.onerror = function() {
+                        delete window[callbackName];
+                        document.body.removeChild(script);
+                        reject(new Error('Errore caricamento script'));
+                    };
+                });
+                
+                script.src = SHEETS_API_URL + '?callback=' + callbackName;
+                document.body.appendChild(script);
+                
+                const data = await promise;
                 
                 if (data.success) {
                     allRequests = data.requests || [];
@@ -130,25 +151,47 @@
             try {
                 updateSyncStatus('💾 Salvataggio in corso...');
                 
-                const response = await fetch(SHEETS_API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'addRequest',
-                        data: requestData
-                    })
-                });
+                // Usa un form nascosto per POST con JSONP
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = SHEETS_API_URL;
+                form.target = 'hidden_iframe';
+                form.style.display = 'none';
                 
-                const result = await response.json();
-                
-                if (result.success) {
-                    updateSyncStatus('✅ Salvato: ' + new Date().toLocaleTimeString('it-IT'));
-                    // Ricarica i dati dopo 1 secondo
-                    setTimeout(loadDataFromSheets, 1000);
-                    return true;
-                } else {
-                    throw new Error(result.error || 'Errore nel salvataggio');
+                // Crea un iframe nascosto per la risposta
+                let iframe = document.getElementById('hidden_iframe');
+                if (!iframe) {
+                    iframe = document.createElement('iframe');
+                    iframe.id = 'hidden_iframe';
+                    iframe.name = 'hidden_iframe';
+                    iframe.style.display = 'none';
+                    document.body.appendChild(iframe);
                 }
+                
+                // Aggiungi i dati come input hidden
+                const dataInput = document.createElement('input');
+                dataInput.type = 'hidden';
+                dataInput.name = 'data';
+                dataInput.value = JSON.stringify({
+                    action: 'addRequest',
+                    data: requestData
+                });
+                form.appendChild(dataInput);
+                
+                // Aggiungi il form al body e invia
+                document.body.appendChild(form);
+                
+                // Aspetta un po' prima di dire che è salvato
+                form.submit();
+                
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                document.body.removeChild(form);
+                
+                updateSyncStatus('✅ Salvato: ' + new Date().toLocaleTimeString('it-IT'));
+                setTimeout(loadDataFromSheets, 1000);
+                return true;
+                
             } catch (error) {
                 console.error('Errore salvataggio:', error);
                 updateSyncStatus('❌ Errore salvataggio: ' + error.message);
@@ -161,21 +204,41 @@
             if (!isConfigured) return false;
             
             try {
-                const response = await fetch(SHEETS_API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'updateStatus',
-                        requestId: requestId,
-                        status: newStatus
-                    })
-                });
+                // Usa form POST per aggirare CORS
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = SHEETS_API_URL;
+                form.target = 'hidden_iframe';
+                form.style.display = 'none';
                 
-                const result = await response.json();
-                if (result.success) {
-                    setTimeout(loadDataFromSheets, 1000);
+                let iframe = document.getElementById('hidden_iframe');
+                if (!iframe) {
+                    iframe = document.createElement('iframe');
+                    iframe.id = 'hidden_iframe';
+                    iframe.name = 'hidden_iframe';
+                    iframe.style.display = 'none';
+                    document.body.appendChild(iframe);
                 }
-                return result.success;
+                
+                const dataInput = document.createElement('input');
+                dataInput.type = 'hidden';
+                dataInput.name = 'data';
+                dataInput.value = JSON.stringify({
+                    action: 'updateStatus',
+                    requestId: requestId,
+                    status: newStatus
+                });
+                form.appendChild(dataInput);
+                
+                document.body.appendChild(form);
+                form.submit();
+                
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                document.body.removeChild(form);
+                setTimeout(loadDataFromSheets, 1000);
+                return true;
+                
             } catch (error) {
                 console.error('Errore aggiornamento:', error);
                 return false;
